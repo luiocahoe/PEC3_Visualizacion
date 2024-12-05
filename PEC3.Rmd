@@ -1,0 +1,444 @@
+---
+title: "Hotel bookings data"
+output:
+  flexdashboard::flex_dashboard:
+    css: "layout.css"
+    orientation: columns
+    source_code: embed
+    theme:
+      version: 4
+      base_font: 
+        google: Prompt
+      heading_font:
+        google: Sen
+      code_font:
+        google: 
+          # arguments to sass::font_google() 
+          family: JetBrains Mono
+          local: false
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(knitr)
+```
+
+
+# Datos
+
+## 
+
+### Descripción
+
+La fuente de los datos es https://www.sciencedirect.com/science/article/pii/S2352340918315191.
+
+Se ha usado el lenguaje `R` para realizar el análisis del conjunto de datos, con las liberías  `plotly` y `highcharter` para los gráficos interactivos, y `flexdashboard` para la creación del dashboard. Para más información se puede obtener el código de la creación de este archivo HTML en la equina superior derecha, en *source code*.
+
+El conjunto de datos analizado proviene de dos hoteles situados en Portugal: un hotel de resort (H1) y un hotel urbano (H2). Contiene datos de demanda de reservas de hotel recolectados entre el 1 de julio de 2015 y el 31 de agosto de 2017. Este conjunto incluye tanto reservas efectivas como cancelaciones, con un total de 31 variables y 40,060 observaciones para H1, y 79,330 observaciones para H2. 
+
+Las variables del conjunto de datos describen características clave de cada reserva y del cliente, y están clasificadas en varios tipos: 
+
+1. **Numéricas/Enteras:**
+   - `ADR`: Tarifa diaria promedio.
+   - `Adults`, `Children`, `Babies`: Número de adultos, niños y bebés.
+   - `LeadTime`: Días entre la reserva y la fecha de llegada.
+   - `BookingChanges`, `PreviousBookingsNotCanceled`, `PreviousCancellations`: Estadísticas sobre modificaciones o historiales de reservas.
+   - `StaysInWeekendNights`, `StaysInWeekNights`: Número de noches de fin de semana y entre semana reservadas.
+   - `DaysInWaitingList`, `TotalOfSpecialRequests`, `RequiredCarParkingSpaces`: Estadísticas adicionales relacionadas con la reserva.
+
+2. **Categóricas:**
+   - `IsCanceled`, `IsRepeatedGuest`: Indicadores binarios de cancelación y de cliente repetido.
+   - `ArrivalDateMonth`, `ArrivalDateWeekNumber`, `ArrivalDateYear`: Información sobre la fecha de llegada.
+   - `AssignedRoomType`, `ReservedRoomType`: Tipos de habitación asignada y reservada.
+   - `DepositType`, `MarketSegment`, `DistributionChannel`, `CustomerType`, `Meal`: Detalles sobre métodos de pago, segmentos de mercado, canales de distribución, tipo de cliente y paquete de comidas.
+   - `Country`: País de origen del cliente.
+
+3. **Fecha:**
+   - `ReservationStatusDate`: Fecha del último estado de la reserva.
+
+# Preprocesamiento
+
+##
+
+### Lectura y depuración
+
+Leemos los datos y cargamos la librerías necesarias:
+
+```{r echo=TRUE}
+library(tidyverse)
+library(plotly)
+library(kableExtra)
+library(plotly)
+library(highcharter)
+hotel_data = read.csv("hotel_bookings.csv")
+```
+
+Hacemos un resumen de las variables `adults`, `children` y `babies`:
+
+```{r echo=TRUE}
+columns = c("adults", "children", "babies")
+summary_df = data.frame(Statistic = c("Min", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max", "NA"))
+for (col in columns) {
+  summary_df[[col]] = c(
+    Min = min(hotel_data[[col]], na.rm = TRUE),
+    `1st Qu.` = quantile(hotel_data[[col]], 0.25, na.rm = TRUE),
+    Median = median(hotel_data[[col]], na.rm = TRUE),
+    Mean = mean(hotel_data[[col]], na.rm = TRUE),
+    `3rd Qu.` = quantile(hotel_data[[col]], 0.75, na.rm = TRUE),
+    Max = max(hotel_data[[col]], na.rm = TRUE),
+    `NA`= sum(is.na(hotel_data[[col]]))
+  )
+}
+
+rownames(summary_df)=summary_df$Statistic
+summary_df=summary_df[,-1]
+```
+
+```{r}
+summary_df %>% 
+  round(digits=2) %>% 
+  kbl(caption = "Resumen de las variables") %>% 
+  kable_styling(bootstrap_options=c("striped", "hover")) %>% 
+  kable_styling(full_width = F)
+```
+
+Las variables tienen distribuciones que indican que la mayoría de las reservas tienen pocos adultos, niños y bebés, con algunos valores atípicos (como 55 adultos o 10 bebés) que podrían ser errores en los datos. Además eliminaremos los datos perdidos de children.
+
+Veamos la tabla de frecuencias de cada una de las variables:
+
+```{r}
+t(table(hotel_data$adults)) %>% 
+  kbl(caption = "Distribución de la variable Adults") %>% 
+  kable_styling(bootstrap_options=c("striped", "hover")) %>% 
+  kable_styling(full_width = F)
+```
+
+Se eliminarán los valores de la columna adults que sean superiores a 10, incluidos aquellos con el valor 10 o mayor. Esto se hace porque estos valores parecen ser atípicos o errores en los datos, ya que no son comunes en el contexto de las reservas de hotel. Es probable que representen entradas incorrectas o fuera de lugar, por lo que se procederá a eliminarlos para mejorar la calidad y precisión del análisis posterior.
+
+```{r}
+t(table(hotel_data$children)) %>% 
+  kbl(caption = "Distribución de la variable Children") %>% 
+  kable_styling(bootstrap_options=c("striped", "hover")) %>% 
+  kable_styling(full_width = F)
+```
+
+Se eliminarán los valores de la columna children que sean superiores a 3.
+
+```{r}
+t(table(hotel_data$babies)) %>% 
+  kbl(caption = "Distribución de la variable Babies") %>% 
+  kable_styling(bootstrap_options=c("striped", "hover")) %>% 
+  kable_styling(full_width = F)
+```
+
+Se eliminarán los valores de la columna children que sean superiores a 2.
+
+Veamos si la variable `country` tiene valores perdidos:
+
+```{r echo=TRUE}
+sum(is.na(hotel_data$country))
+```
+
+Veamos si la variable `is_canceled` tiene valores perdidos:
+
+```{r echo=TRUE}
+sum(is.na(hotel_data$is_canceled))
+```
+
+Filtramos los datos con las anteriores condiciones propuestas:
+
+```{r echo=TRUE}
+hotel_data=hotel_data %>% 
+  filter(adults<10) %>% 
+  filter(children<10) %>% 
+  filter(babies<9) %>% 
+  filter(!is.na(babies))
+```
+
+# Resumen {data-orientation=rows}
+
+## Fila 1 
+
+### Cuadro
+
+```{r}
+valueBox(nrow(hotel_data), 
+         caption="Número de reservas", 
+         icon="fa-hotel",
+         color="#00B0F6")
+```
+
+### Cuadro
+
+```{r}
+valueBox(paste0(round(sum(hotel_data$is_canceled) /nrow(hotel_data) *100,2),"%"), 
+         caption="Cancelaciones", 
+         icon="fa-xmark",
+         color="#F8766D")
+```
+
+### Cuadro
+
+```{r}
+valueBox(hotel_data %>% 
+           mutate(total_person=adults+children+babies) %>% 
+           pull(total_person) %>% 
+           mean(na.rm=T) %>% 
+           round(digits = 2), 
+         caption="Personas de media por reserva", 
+         icon="fa-person",
+         color="#E76BF3")
+```
+
+### Cuadro
+
+```{r}
+valueBox(hotel_data %>% 
+           pull(country) %>% 
+           n_distinct(), 
+         caption="Países distintos", 
+         icon="fa-globe",
+         color="#FFB558")
+```
+
+### Cuadro
+
+```{r}
+valueBox(sum(hotel_data$is_repeated_guest), 
+         caption= "Número de repetidores", 
+         icon="fa-repeat",
+         color="#00BF7D")
+```
+
+## Fila 2
+
+###
+
+```{r}
+library(highcharter)
+hotel_data %>%
+  group_by(hotel) %>%
+  summarise(reservas = n(), .groups = "drop") %>%
+  mutate(percentage = reservas / sum(reservas) * 100) %>% 
+  hchart(
+    "column", hcaes(x = hotel, y = reservas),
+    name = "Reservas"
+    )
+```
+
+###
+
+```{r}
+library(countrycode)
+hotel_data %>%
+  group_by(country) %>%
+  summarise(ocurrencias = n()) %>%
+  arrange(desc(ocurrencias)) %>%
+  slice(1:10) %>%
+  mutate(country_name = countrycode(country, 
+                                    origin = "iso3c", 
+                                    destination = "country.name")) %>% 
+  hchart(
+    "pie", hcaes(x = country_name, y = ocurrencias),
+    name = "Reservas"
+    ) %>% 
+  hc_title(text = "TOP 10 nacionalidades")
+```
+
+###
+
+```{r}
+lead_time_histograma = ggplot(hotel_data, aes(x = lead_time)) +
+  geom_histogram(binwidth = 10, fill = "#56B4E9", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribución del Tiempo de Antelación",
+    x = "Lead Time",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+ggplotly(lead_time_histograma)
+```
+
+## Fila 3
+
+###
+
+```{r}
+hotel_data=
+  hotel_data %>% 
+  mutate(date=paste(arrival_date_day_of_month,arrival_date_month,arrival_date_year,sep="-")) %>% 
+  mutate(date=as.Date(date, format="%d-%B-%Y"))
+
+serie_temporal_plot=hotel_data %>% 
+  filter(is_canceled==0) %>% 
+  group_by(date) %>% 
+  summarise(reservas=n()) %>% 
+  ggplot(aes(x = date, y = reservas)) +
+  geom_line(color = "steelblue", size = 0.5) +
+  labs(
+    title = "Reservas Confirmadas",
+    x = "Fecha",
+    y = "Número de Reservas"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggplotly(serie_temporal_plot)
+```
+
+
+# Cancelaciones {.storyboard}
+
+### Historico
+
+```{r}
+serie_temporal_canc_plot=hotel_data %>% 
+  filter(is_canceled==1) %>% 
+  group_by(date) %>% 
+  summarise(cancelaciones=n()) %>% 
+  ggplot(aes(x = date, y = cancelaciones)) +
+  geom_line(color = "steelblue", size = 0.5) +
+  labs(
+    title = "Reservas canceladas",
+    x = "Fecha",
+    y = "Número de cancelaciones"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggplotly(serie_temporal_canc_plot)
+```
+
+### Procedencia
+
+```{r}
+cancelaciones_por_pais = hotel_data %>%
+  group_by(country) %>%
+  summarise(
+    total_reservas = n(),
+    total_cancelaciones = sum(is_canceled, na.rm = TRUE)
+  ) %>%
+  mutate(porcentaje_cancelaciones = round((total_cancelaciones / total_reservas) * 100),2) %>%
+  arrange(desc(porcentaje_cancelaciones)) 
+
+hcmap("custom/world", 
+      data = cancelaciones_por_pais,
+      joinBy = c("iso-a3", "country"),  
+      value = "porcentaje_cancelaciones", 
+      name = "Porcentaje de cancelaciones",
+      tooltip = list(
+        pointFormat = paste(
+          "<b>{point.name}</b><br>",
+          "Porcentaje de cancelaciones: {point.value:.2f}%<br>",
+          "Total de reservas: {point.total_reservas}<br>",
+          "Total de cancelaciones: {point.total_cancelaciones}"
+        )
+      )) %>%
+  hc_title(text = "Porcentaje de cancelaciones por país") %>%
+  hc_colorAxis(minColor = "#E6F2FF", maxColor = "#004080") %>%  
+  hc_legend(title = list(text = "Porcentaje de cancelaciones (%)"))
+```
+
+### Porcentaje cancelaciones
+
+```{r}
+cancel_data = hotel_data %>%
+  group_by(arrival_date_month, hotel) %>%
+  summarise(
+    total_bookings = n(),
+    canceled = sum(is_canceled)
+  ) %>%
+  mutate(cancel_rate = (canceled / total_bookings) * 100)
+
+month_order = c("January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November", "December")
+cancel_data$arrival_date_month = factor(cancel_data$arrival_date_month, levels = month_order)
+
+mean_cancel_rate = cancel_data %>%
+  group_by(hotel) %>%
+  summarise(mean_rate = mean(cancel_rate, na.rm = TRUE))
+
+cancel_plot = ggplot(cancel_data, 
+                      aes(x = arrival_date_month, 
+                          y = cancel_rate, 
+                          color = hotel, 
+                          group = hotel)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_hline(data = mean_cancel_rate, 
+             aes(yintercept = mean_rate, 
+                 color = hotel), 
+             linetype = "dashed", size = 0.5) +
+  geom_text(data = mean_cancel_rate, 
+            aes(x = 1, 
+                y = mean_rate+1, 
+                label = paste0(round(mean_rate, 1),"%"), 
+                color = hotel),
+            hjust = 1, vjust = -1.5, size = 4, inherit.aes = FALSE) +
+  labs(
+    title = "Tasa de Cancelaciones por Mes y Tipo de Hotel",
+    x = "Mes de Llegada",
+    y = "Tasa de Cancelaciones (%)",
+    color = "Tipo de Hotel"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+ggplotly(cancel_plot)
+
+```
+
+### Tiempo de antelación
+
+```{r}
+time_plot=hotel_data %>% 
+  mutate(is_canceled=ifelse(is_canceled==1,"Canceled","Not canceled")) %>% 
+  ggplot(aes(x = as.factor(is_canceled), y = lead_time, fill = as.factor(is_canceled))) +
+  geom_violin(alpha = 0.7, trim = TRUE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.5) + 
+  scale_fill_manual(values = c("#56B4E9", "#D55E00"), labels = c("No Cancelado", "Cancelado")) +
+  labs(
+    title = "Relación entre el Tiempo de Antelación y las Cancelaciones",
+    x = "Estado de Cancelación",
+    y = "Tiempo de Antelación (Lead Time)",
+    fill = "Estado de Cancelación"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    legend.position = "none"
+  )
+
+ggplotly(time_plot)
+```
+
+### Resultados
+
+**Conclusiones:**
+
+- Cancelaciones más altas en el hotel City, probablemente por la naturaleza de la reserva.
+
+- Cancelaciones en el hotel Resort son más altas en los meses de verano, puede que debido a factores como clima, restricciones de viaje o motivos personales.
+
+- Reservas con antelación son más propensas a ser canceladas.
+
+**Posible solución:**
+
+- Considerar implementar políticas más estrictas de cancelación o incentivos para reservas hechas con más antelación, como descuentos no reembolsables para clientes que reservan temprano.
+
+- Realizar una investigación más profunda sobre los países con mayores tasas de cancelación para entender los motivos subyacentes y diseñar políticas específicas que reduzcan estas cancelaciones. Por ejemplo China, con 462 cancelaciones (46%).
+
